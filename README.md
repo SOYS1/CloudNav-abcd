@@ -23,9 +23,9 @@
 
 </div>
 
-forked from [sese972010/CloudNav-](https://github.com/sese972010/CloudNav-)
-
 ---
+<details>
+<summary><strong>👉 点击查看项目功能介绍</strong></summary>
 
 ## ✨ 核心功能
 
@@ -65,6 +65,7 @@ forked from [sese972010/CloudNav-](https://github.com/sese972010/CloudNav-)
 | *一键批量生成描述* | *私密目录密码保护* | *完美适配手机浏览器* |
 
 *(注：上方使用了项目生成的 SVG 矢量预览图，代表实际 UI 布局)*
+</details>
 
 ---
 
@@ -134,6 +135,9 @@ forked from [sese972010/CloudNav-](https://github.com/sese972010/CloudNav-)
 
 ---
 
+<details>
+<summary><strong>👉 点击查看使用指南</strong></summary>
+
 ## ⚙️ 使用指南
 
 ### 1. Chrome 扩展程序 (推荐)
@@ -163,6 +167,8 @@ forked from [sese972010/CloudNav-](https://github.com/sese972010/CloudNav-)
 1. 打开 Chrome 浏览器，点击右上角菜单 -> **书签与清单** -> **书签管理器**。
 2. 点击页面右上角的三个点图标 -> **导入书签**。
 3. 选择刚才从云航下载的 HTML 文件即可恢复所有书签。
+
+</details>
 
 ---
 
