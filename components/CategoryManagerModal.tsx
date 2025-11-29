@@ -34,6 +34,16 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   if (!isOpen) return null;
 
   const handleMove = (index: number, direction: 'up' | 'down') => {
+    // 防止移动"常用推荐"分类
+    if (categories[index].id === 'common') {
+      return;
+    }
+    
+    // 防止将其他分类移动到"常用推荐"分类之上
+    if (direction === 'up' && index > 0 && categories[index - 1].id === 'common') {
+      return;
+    }
+    
     const newCats = [...categories];
     if (direction === 'up' && index > 0) {
       [newCats[index], newCats[index - 1]] = [newCats[index - 1], newCats[index]];
@@ -118,14 +128,14 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                   <div className="flex flex-col gap-1 mr-2">
                     <button 
                       onClick={() => handleMove(index, 'up')}
-                      disabled={index === 0}
+                      disabled={index === 0 || cat.id === 'common'}
                       className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30"
                     >
                       <ArrowUp size={14} />
                     </button>
                     <button 
                       onClick={() => handleMove(index, 'down')}
-                      disabled={index === categories.length - 1}
+                      disabled={index === categories.length - 1 || cat.id === 'common'}
                       className="p-0.5 text-slate-400 hover:text-blue-500 disabled:opacity-30"
                     >
                       <ArrowDown size={14} />
@@ -133,7 +143,7 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {editingId === cat.id ? (
+                    {editingId === cat.id && cat.id !== 'common' ? (
                       <div className="flex flex-col gap-2">
                         <div className="flex items-center gap-2">
                           <Icon name={editIcon} size={16} />
@@ -168,7 +178,12 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                     ) : (
                       <div className="flex items-center gap-2">
                         <Icon name={cat.icon} size={16} />
-                        <span className="font-medium dark:text-slate-200 truncate">{cat.name}</span>
+                        <span className="font-medium dark:text-slate-200 truncate">
+                          {cat.name}
+                          {cat.id === 'common' && (
+                            <span className="ml-2 text-xs text-slate-400">(默认分类，不可编辑)</span>
+                          )}
+                        </span>
                         {cat.password && (
                           <Lock size={12} className="text-slate-400" />
                         )}
@@ -182,15 +197,26 @@ const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
                        <button onClick={saveEdit} className="text-green-500 hover:bg-green-50 dark:hover:bg-slate-600 p-1.5 rounded bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-600"><Check size={16}/></button>
                     ) : (
                        <>
-                        <button onClick={() => startEdit(cat)} className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded">
-                            <Edit2 size={14} />
-                        </button>
-                        <button 
-                        onClick={() => { if(confirm(`确定删除"${cat.name}"分类吗？该分类下的书签将移动到"常用推荐"。`)) onDeleteCategory(cat.id); }}
-                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"
-                        >
-                        <Trash2 size={14} />
-                        </button>
+                        {cat.id !== 'common' && (
+                          <button onClick={() => startEdit(cat)} className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded">
+                              <Edit2 size={14} />
+                          </button>
+                        )}
+                        {/* 只有非"常用推荐"分类才显示删除按钮 */}
+                        {cat.id !== 'common' && (
+                            <button 
+                            onClick={() => { if(confirm(`确定删除"${cat.name}"分类吗？该分类下的书签将移动到"常用推荐"。`)) onDeleteCategory(cat.id); }}
+                            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-slate-200 dark:hover:bg-slate-600 rounded"
+                            >
+                            <Trash2 size={14} />
+                            </button>
+                        )}
+                        {/* "常用推荐"分类显示锁定图标 */}
+                        {cat.id === 'common' && (
+                            <div className="p-1.5 text-slate-300" title="常用推荐分类不能被删除">
+                                <Lock size={14} />
+                            </div>
+                        )}
                        </>
                     )}
                   </div>

@@ -88,8 +88,13 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
     try {
       // 提取域名
       let domain = url;
-      if (url.startsWith('http://') || url.startsWith('https://')) {
-        const urlObj = new URL(url);
+      // 如果URL没有协议前缀，添加https://作为默认协议
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        domain = 'https://' + url;
+      }
+      
+      if (domain.startsWith('http://') || domain.startsWith('https://')) {
+        const urlObj = new URL(domain);
         domain = urlObj.hostname;
       }
       
@@ -163,12 +168,12 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, onDelete
             <label className="block text-sm font-medium mb-1 dark:text-slate-300">URL 链接</label>
             <div className="flex gap-2">
                 <input
-                type="url"
+                type="text"
                 required
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 className="w-full p-2 rounded-lg border border-slate-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                placeholder="https://..."
+                placeholder="example.com 或 https://..."
                 />
             </div>
           </div>

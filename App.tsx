@@ -105,6 +105,10 @@ function App() {
   const [isSortingMode, setIsSortingMode] = useState<string | null>(null); // 存储正在排序的分类ID，null表示不在排序模式
   const [isSortingPinned, setIsSortingPinned] = useState(false); // 是否正在排序置顶链接
   
+  // Batch Edit State
+  const [isBatchEditMode, setIsBatchEditMode] = useState(false); // 是否处于批量编辑模式
+  const [selectedLinks, setSelectedLinks] = useState<Set<string>>(new Set()); // 选中的链接ID集合
+  
   // --- Helpers & Sync Logic ---
 
   const loadFromLocal = () => {
@@ -112,8 +116,39 @@ function App() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        setLinks(parsed.links || INITIAL_LINKS);
-        setCategories(parsed.categories || DEFAULT_CATEGORIES);
+        let loadedCategories = parsed.categories || DEFAULT_CATEGORIES;
+        
+        // 确保"常用推荐"分类始终存在，并确保它是第一个分类
+        if (!loadedCategories.some(c => c.id === 'common')) {
+          loadedCategories = [
+            { id: 'common', name: '常用推荐', icon: 'Star' },
+            ...loadedCategories
+          ];
+        } else {
+          // 如果"常用推荐"分类已存在，确保它是第一个分类
+          const commonIndex = loadedCategories.findIndex(c => c.id === 'common');
+          if (commonIndex > 0) {
+            const commonCategory = loadedCategories[commonIndex];
+            loadedCategories = [
+              commonCategory,
+              ...loadedCategories.slice(0, commonIndex),
+              ...loadedCategories.slice(commonIndex + 1)
+            ];
+          }
+        }
+        
+        // 检查是否有链接的categoryId不存在于当前分类中，将这些链接移动到"常用推荐"
+        const validCategoryIds = new Set(loadedCategories.map(c => c.id));
+        let loadedLinks = parsed.links || INITIAL_LINKS;
+        loadedLinks = loadedLinks.map(link => {
+          if (!validCategoryIds.has(link.categoryId)) {
+            return { ...link, categoryId: 'common' };
+          }
+          return link;
+        });
+        
+        setLinks(loadedLinks);
+        setCategories(loadedCategories);
       } catch (e) {
         setLinks(INITIAL_LINKS);
         setCategories(DEFAULT_CATEGORIES);
@@ -283,6 +318,56 @@ function App() {
     }
   };
 
+  // --- Batch Edit Functions ---
+  const toggleBatchEditMode = () => {
+    setIsBatchEditMode(!isBatchEditMode);
+    setSelectedLinks(new Set()); // 退出批量编辑模式时清空选中项
+  };
+
+  const toggleLinkSelection = (linkId: string) => {
+    setSelectedLinks(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(linkId)) {
+        newSet.delete(linkId);
+      } else {
+        newSet.add(linkId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleBatchDelete = () => {
+    if (!authToken) { setIsAuthOpen(true); return; }
+    
+    if (selectedLinks.size === 0) {
+      alert('请先选择要删除的链接');
+      return;
+    }
+    
+    if (confirm(`确定要删除选中的 ${selectedLinks.size} 个链接吗？`)) {
+      const newLinks = links.filter(link => !selectedLinks.has(link.id));
+      updateData(newLinks, categories);
+      setSelectedLinks(new Set());
+      setIsBatchEditMode(false);
+    }
+  };
+
+  const handleBatchMove = (targetCategoryId: string) => {
+    if (!authToken) { setIsAuthOpen(true); return; }
+    
+    if (selectedLinks.size === 0) {
+      alert('请先选择要移动的链接');
+      return;
+    }
+    
+    const newLinks = links.map(link => 
+      selectedLinks.has(link.id) ? { ...link, categoryId: targetCategoryId } : link
+    );
+    updateData(newLinks, categories);
+    setSelectedLinks(new Set());
+    setIsBatchEditMode(false);
+  };
+
   // --- Actions ---
 
   const handleLogin = async (password: string): Promise<boolean> => {
@@ -338,6 +423,12 @@ function App() {
   const handleImportConfirm = (newLinks: LinkItem[], newCategories: Category[]) => {
       // Merge categories: Avoid duplicate names/IDs
       const mergedCategories = [...categories];
+      
+      // 确保"常用推荐"分类始终存在
+      if (!mergedCategories.some(c => c.id === 'common')) {
+        mergedCategories.push({ id: 'common', name: '常用推荐', icon: 'Star' });
+      }
+      
       newCategories.forEach(nc => {
           if (!mergedCategories.some(c => c.id === nc.id || c.name === nc.name)) {
               mergedCategories.push(nc);
@@ -353,6 +444,12 @@ function App() {
   const handleAddLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
     if (!authToken) { setIsAuthOpen(true); return; }
     
+    // 处理URL，确保有协议前缀
+    let processedUrl = data.url;
+    if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
+      processedUrl = 'https://' + processedUrl;
+    }
+    
     // 获取当前分类下的所有链接（不包括置顶链接）
     const categoryLinks = links.filter(link => 
       !link.pinned && (data.categoryId === 'all' || link.categoryId === data.categoryId)
@@ -365,6 +462,7 @@ function App() {
     
     const newLink: LinkItem = {
       ...data,
+      url: processedUrl, // 使用处理后的URL
       id: Date.now().toString(),
       createdAt: Date.now(),
       order: maxOrder + 1, // 设置为当前分类的最大order值+1，确保排在最后
@@ -407,7 +505,14 @@ function App() {
   const handleEditLink = (data: Omit<LinkItem, 'id' | 'createdAt'>) => {
     if (!authToken) { setIsAuthOpen(true); return; }
     if (!editingLink) return;
-    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data } : l);
+    
+    // 处理URL，确保有协议前缀
+    let processedUrl = data.url;
+    if (processedUrl && !processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
+      processedUrl = 'https://' + processedUrl;
+    }
+    
+    const updated = links.map(l => l.id === editingLink.id ? { ...l, ...data, url: processedUrl } : l);
     updateData(updated, categories);
     setEditingLink(undefined);
   };
@@ -604,15 +709,26 @@ function App() {
 
   const handleDeleteCategory = (catId: string) => {
       if (!authToken) { setIsAuthOpen(true); return; }
-      const newCats = categories.filter(c => c.id !== catId);
+      
+      // 防止删除"常用推荐"分类
+      if (catId === 'common') {
+          alert('"常用推荐"分类不能被删除');
+          return;
+      }
+      
+      let newCats = categories.filter(c => c.id !== catId);
+      
+      // 检查是否存在"常用推荐"分类，如果不存在则创建它
+      if (!newCats.some(c => c.id === 'common')) {
+          newCats = [
+              { id: 'common', name: '常用推荐', icon: 'Star' },
+              ...newCats
+          ];
+      }
+      
       // Move links to common or first available
       const targetId = 'common'; 
       const newLinks = links.map(l => l.categoryId === catId ? { ...l, categoryId: targetId } : l);
-      
-      // Ensure common exists if we deleted everything
-      if (newCats.length === 0) {
-          newCats.push(DEFAULT_CATEGORIES[0]);
-      }
       
       updateData(newLinks, newCats);
   };
@@ -737,46 +853,78 @@ function App() {
     );
   };
 
-  const renderLinkCard = (link: LinkItem) => (
-    <a
+  const renderLinkCard = (link: LinkItem) => {
+    const isSelected = selectedLinks.has(link.id);
+    
+    return (
+      <div
         key={link.id}
-        href={link.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="group relative flex items-center gap-3 p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700/50 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
-        title={link.description || link.url} // Native tooltip fallback
-    >
-        {/* Compact Icon */}
-        <div className="w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700 text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold uppercase shrink-0">
-            {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
-        </div>
-        
-        {/* Text Content */}
-        <div className="flex-1 min-w-0">
-            <h3 className="font-medium text-sm text-slate-800 dark:text-slate-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                {link.title}
-            </h3>
-            {link.description && (
-               <div className="tooltip-custom absolute left-0 -top-8 w-max max-w-[200px] bg-black text-white text-xs p-2 rounded opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-all z-20 pointer-events-none truncate">
-                  {link.description}
-               </div>
-            )}
-        </div>
+        className={`group relative flex items-center gap-3 p-3 rounded-xl border shadow-sm transition-all duration-200 ${
+          isSelected 
+            ? 'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800' 
+            : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700/50'
+        } ${isBatchEditMode ? 'cursor-pointer' : ''}`}
+        onClick={() => isBatchEditMode && toggleLinkSelection(link.id)}
+      >
+        {/* 链接内容 - 在批量编辑模式下不使用a标签 */}
+        {isBatchEditMode ? (
+          <div className="flex items-center gap-3 flex-1">
+            {/* Compact Icon */}
+            <div className="w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700 text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold uppercase shrink-0">
+                {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
+            </div>
+            
+            {/* Text Content */}
+            <div className="flex-1 min-w-0">
+                <h3 className="font-medium text-sm text-slate-800 dark:text-slate-200 truncate">
+                    {link.title}
+                </h3>
+            </div>
+          </div>
+        ) : (
+          <a
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-3 flex-1"
+            title={link.description || link.url} // Native tooltip fallback
+          >
+            {/* Compact Icon */}
+            <div className="w-8 h-8 rounded-lg bg-slate-50 dark:bg-slate-700 text-blue-600 dark:text-blue-400 flex items-center justify-center text-sm font-bold uppercase shrink-0">
+                {link.icon ? <img src={link.icon} alt="" className="w-5 h-5"/> : link.title.charAt(0)}
+            </div>
+            
+            {/* Text Content */}
+            <div className="flex-1 min-w-0">
+                <h3 className="font-medium text-sm text-slate-800 dark:text-slate-200 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                    {link.title}
+                </h3>
+                {link.description && (
+                  <div className="tooltip-custom absolute left-0 -top-8 w-max max-w-[200px] bg-black text-white text-xs p-2 rounded opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-all z-20 pointer-events-none truncate">
+                    {link.description}
+                  </div>
+                )}
+            </div>
+          </a>
+        )}
 
-        {/* Hover Actions (Absolute Right or Flex) */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 bg-white/90 dark:bg-slate-800/90 pl-2">
-            <button 
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingLink(link); setIsModalOpen(true); }}
-                className="p-1 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
-                title="编辑"
-            >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5a3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97c0-.33-.03-.65-.07-.97l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.08-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.32-.07.64-.07.97c0 .33.03.65.07.97l-2.11 1.63c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.39 1.06.73 1.69.98l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.25 1.17-.59 1.69-.98l2.49 1c.22.08.49 0 .61-.22l2-3.46c.13-.22.07-.49-.12-.64l-2.11-1.63Z" fill="currentColor"/>
-                </svg>
-            </button>
-        </div>
-    </a>
-  );
+        {/* Hover Actions (Absolute Right or Flex) - 在批量编辑模式下隐藏 */}
+        {!isBatchEditMode && (
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 bg-white/90 dark:bg-slate-800/90 pl-2">
+              <button 
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingLink(link); setIsModalOpen(true); }}
+                  className="p-1 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md"
+                  title="编辑"
+              >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5a3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97c0-.33-.03-.65-.07-.97l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.3-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.08-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.32-.07.64-.07.97c0 .33.03.65.07.97l-2.11 1.63c-.19.15-.24.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1c.52.39 1.06.73 1.69.98l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.25 1.17-.59 1.69-.98l2.49 1c.22.08.49 0 .61-.22l2-3.46c.13-.22.07-.49-.12-.64l-2.11-1.63Z" fill="currentColor"/>
+                  </svg>
+              </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
 
   return (
@@ -966,7 +1114,7 @@ function App() {
                  title="Fork this project on GitHub"
                >
                  <GitFork size={14} />
-                 <span>Fork 项目 v1.0</span>
+                 <span>Fork 项目 v1.1</span>
                </a>
             </div>
         </div>
@@ -1128,14 +1276,60 @@ function App() {
                                  </button>
                              </div>
                          ) : (
-                             <button 
-                                 onClick={() => startSorting(selectedCategory)}
-                                 className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-full transition-colors"
-                                 title="排序"
-                             >
-                                 <GripVertical size={14} />
-                                 <span>排序</span>
-                             </button>
+                             <div className="flex gap-2">
+                                 <button 
+                                     onClick={toggleBatchEditMode}
+                                     className={`flex items-center gap-1 px-3 py-1.5 text-white text-xs font-medium rounded-full transition-colors ${
+                                         isBatchEditMode 
+                                             ? 'bg-red-600 hover:bg-red-700' 
+                                             : 'bg-blue-600 hover:bg-blue-700'
+                                     }`}
+                                     title={isBatchEditMode ? "退出批量编辑" : "批量编辑"}
+                                 >
+                                     {isBatchEditMode ? '取消' : '批量编辑'}
+                                 </button>
+                                 {isBatchEditMode ? (
+                                     <>
+                                         <button 
+                                             onClick={handleBatchDelete}
+                                             className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-full transition-colors"
+                                             title="批量删除"
+                                         >
+                                             <Trash2 size={14} />
+                                             <span>批量删除</span>
+                                         </button>
+                                         <div className="relative group">
+                                              <button 
+                                                  className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-full transition-colors"
+                                                  title="批量移动"
+                                              >
+                                                  <Upload size={14} />
+                                                  <span>批量移动</span>
+                                              </button>
+                                              <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 z-20 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                                                  {categories.filter(cat => cat.id !== selectedCategory).map(cat => (
+                                                      <button
+                                                          key={cat.id}
+                                                          onClick={() => handleBatchMove(cat.id)}
+                                                          className="w-full text-left px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 first:rounded-t-lg last:rounded-b-lg"
+                                                      >
+                                                          {cat.name}
+                                                      </button>
+                                                  ))}
+                                              </div>
+                                          </div>
+                                     </>
+                                 ) : (
+                                     <button 
+                                         onClick={() => startSorting(selectedCategory)}
+                                         className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-full transition-colors"
+                                         title="排序"
+                                     >
+                                         <GripVertical size={14} />
+                                         <span>排序</span>
+                                     </button>
+                                 )}
+                             </div>
                          )
                      )}
                  </div>
